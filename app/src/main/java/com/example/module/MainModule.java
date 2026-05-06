@@ -1,63 +1,68 @@
-package com.example.module;
+package com.example.okysunlock;
 
-import android.annotation.SuppressLint;
+import android.app.Application;
+import android.content.Context;
 
-import androidx.annotation.NonNull;
+import java.io.File;
+import java.lang.reflect.Method;
 
-import io.github.libxposed.api.XposedInterface;
-import io.github.libxposed.api.XposedModule;
-import io.github.libxposed.api.annotations.BeforeInvocation;
-import io.github.libxposed.api.annotations.XposedHooker;
+import de.robv.android.xposed.IXposedHookLoadPackage;
+import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedHelpers;
+import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import top.canyie.pine.Pine;
+import top.canyie.pine.callback.MethodHook;
 
-/**
- * 这是 Xposed 模块的入口类。
- * 客户化建议：
- * 1. 修改包名 `com.example.module` 为你自己的包名。
- * 2. 在 `onSystemServerLoaded` 或 `onPackageLoaded` 中添加你的 Hook 逻辑。
- */
-@SuppressLint({"PrivateApi", "BlockedPrivateApi"})
-public class MainModule extends XposedModule {
+public class MainHook implements IXposedHookLoadPackage {
 
-    public MainModule(XposedInterface base, ModuleLoadedParam param) {
-        super(base, param);
-    }
+    private static final String TARGET_PACKAGE = "com.layaboxhmhz.gamehmhz.okys";
 
     @Override
-    public void onSystemServerLoaded(@NonNull SystemServerLoadedParam param) {
-        super.onSystemServerLoaded(param);
-        // 在这里添加针对 System Server 的 Hook 逻辑
-        // 例如:
-        // try {
-        //     var classLoader = param.getClassLoader();
-        //     var clazz = classLoader.loadClass("com.android.server.wm.WindowManagerService");
-        //     // hook(method, MyHooker.class);
-        // } catch (Throwable t) {
-        //     log("Hook failed", t);
-        // }
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+        if (!TARGET_PACKAGE.equals(lpparam.packageName)) return;
+
+        // Hook Application.attach 确保最早执行
+        XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                Context context = (Context) param.args[0];
+                if (context == null) return;
+
+                // 写入解锁文件
+                UnlockUtils.writeUnlockFiles(context);
+
+                // 防止 App 删除 ra.txt
+                hookFileDelete();
+            }
+        });
     }
 
-    @Override
-    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
-        super.onPackageLoaded(param);
-        // 在这里添加针对特定应用的 Hook 逻辑
-        // if (param.getPackageName().equals("com.target.package")) {
-        //     // ...
-        // }
-    }
+    private void hookFileDelete() {
+        try {
+            Method deleteMethod = File.class.getDeclaredMethod("delete");
+            Pine.hook(deleteMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    File file = (File) callFrame.thisObject;
+                    if (file != null && "ra.txt".equals(file.getName())) {
+                        callFrame.setResult(true); // 伪装删除成功，但实际不删
+                    }
+                }
+            });
 
-    /**
-     * 这是一个简单的 Hooker 示例。
-     */
-    @XposedHooker
-    private static class ExampleHooker implements Hooker {
-        @BeforeInvocation
-        public static void before(@NonNull BeforeHookCallback callback) {
-            // 在方法执行前执行的逻辑
+            // deleteOnExit
+            Method deleteOnExit = File.class.getDeclaredMethod("deleteOnExit");
+            Pine.hook(deleteOnExit, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    File file = (File) callFrame.thisObject;
+                    if (file != null && "ra.txt".equals(file.getName())) {
+                        callFrame.setResult(null);
+                    }
+                }
+            });
+        } catch (Exception e) {
+            // 忽略
         }
-
-        // @AfterInvocation
-        // public static void after(@NonNull AfterHookCallback callback) {
-        //     // 在方法执行后执行的逻辑
-        // }
     }
 }
